@@ -425,7 +425,7 @@ class EcoSortAI {
 
         if (annotatedSection && annotatedImage) {
           // Construct the URL for the annotated image
-          const imageUrl = `/annotated/${firstDetection.annotated_image_path}`;
+          const imageUrl = `/annotated_images/${firstDetection.annotated_image_path}`;
 
           // Set the image source and show the section
           annotatedImage.src = imageUrl;

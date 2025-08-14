@@ -2,3 +2,6 @@ data/
 model/
 model_npu/
 best.pt
+runs/
+best_openvino_model/
+annotated_images/

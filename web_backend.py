@@ -53,8 +53,13 @@ class EcoSortBackend:
         # WebSocket connections
         self.ws_connections = set()
         
+        # Create annotated images folder
+        self.annotated_folder = Path("annotated_images")
+        self.annotated_folder.mkdir(exist_ok=True)
+        
         self.setup_routes()
         self.setup_websocket_server()
+        self.cleanup_old_files()
     
     def initialize_models(self):
         """Initialize YOLO and LLM models"""
@@ -146,9 +151,9 @@ class EcoSortBackend:
         def static_files(filename):
             return send_from_directory('.', filename)
         
-        @self.app.route('/annotated/<filename>')
+        @self.app.route('/annotated_images/<filename>')
         def annotated_images(filename):
-            return send_from_directory('.', filename)
+            return send_from_directory('annotated_images', filename)
         
         @self.app.route('/api/status', methods=['GET'])
         def get_status():
@@ -191,7 +196,12 @@ class EcoSortBackend:
                         
                         # Add annotated image path to each detection for frontend access
                         for detection in detections:
-                            detection['annotated_image_path'] = Path(annotated_image_path).name if annotated_image_path else None
+                            if annotated_image_path:
+                                # Extract just the filename from the full path
+                                filename = Path(annotated_image_path).name
+                                detection['annotated_image_path'] = filename
+                            else:
+                                detection['annotated_image_path'] = None
                     
                     processing_time = (time.time() - start_time) * 1000
                     
@@ -419,6 +429,29 @@ class EcoSortBackend:
         
         return 'General Waste'
     
+    def cleanup_old_files(self):
+        """Clean up old temporary and annotated files"""
+        try:
+            current_time = time.time()
+            
+            # Clean up temp files older than 1 hour
+            temp_folder = Path("temp")
+            if temp_folder.exists():
+                for file in temp_folder.glob("*"):
+                    if current_time - file.stat().st_mtime > 3600:  # 1 hour
+                        file.unlink()
+                        logger.info(f"Cleaned up old temp file: {file}")
+            
+            # Clean up annotated images older than 24 hours
+            if self.annotated_folder.exists():
+                for file in self.annotated_folder.glob("annotated_*.jpg"):
+                    if current_time - file.stat().st_mtime > 86400:  # 24 hours
+                        file.unlink()
+                        logger.info(f"Cleaned up old annotated image: {file}")
+                        
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
+
     def create_annotated_image(self, image_path: str, detections: List[Dict]) -> str:
         """Create annotated image with bounding boxes and save it"""
         try:
@@ -487,16 +520,51 @@ class EcoSortBackend:
                 # Draw label text
                 draw.text((label_x + 5, label_y + 2), label, fill='white', font=font)
             
-            # Save annotated image
-            annotated_path = f"annotated_{uuid.uuid4().hex}.jpg"
+            # Save annotated image in the folder
+            annotated_filename = f"annotated_{uuid.uuid4().hex}.jpg"
+            annotated_path = self.annotated_folder / annotated_filename
             pil_image.save(annotated_path, quality=85)
             
             logger.info(f"Created annotated image: {annotated_path}")
-            return annotated_path
+            return str(annotated_path)
             
         except Exception as e:
             logger.error(f"Error creating annotated image: {e}")
             return None
+    
+    def cleanup_old_files(self):
+        """Clean up old temporary and annotated files"""
+        try:
+            import glob
+            import os
+            import time
+            
+            # Clean up temporary files older than 1 hour
+            temp_files = glob.glob("temp_*.jpg")
+            current_time = time.time()
+            
+            for temp_file in temp_files:
+                try:
+                    file_age = current_time - os.path.getmtime(temp_file)
+                    if file_age > 3600:  # 1 hour
+                        os.remove(temp_file)
+                        logger.info(f"Cleaned up old temp file: {temp_file}")
+                except Exception as e:
+                    logger.warning(f"Failed to clean temp file {temp_file}: {e}")
+            
+            # Clean up annotated images older than 24 hours
+            if self.annotated_folder.exists():
+                for annotated_file in self.annotated_folder.glob("annotated_*.jpg"):
+                    try:
+                        file_age = current_time - annotated_file.stat().st_mtime
+                        if file_age > 86400:  # 24 hours
+                            annotated_file.unlink()
+                            logger.info(f"Cleaned up old annotated image: {annotated_file}")
+                    except Exception as e:
+                        logger.warning(f"Failed to clean annotated file {annotated_file}: {e}")
+                        
+        except Exception as e:
+            logger.warning(f"Cleanup failed: {e}")
     
     def get_direct_llm_response(self, query: str) -> str:
         """Get direct response from LLM without agent wrapper"""
