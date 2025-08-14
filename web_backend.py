@@ -26,7 +26,6 @@ import cv2
 
 # Import existing modules
 from yolov11_infer_openvino import predict_and_show, load_optimized_model
-from tools import WasteClassifier, RecyclingCart
 from app import setup_models, setup_tools, load_documents
 from llama_index.core import Settings
 
@@ -279,15 +278,37 @@ class EcoSortBackend:
                 if not item_name or not category:
                     return jsonify({'error': 'Missing required fields'}), 400
                 
-                # Add to recycling cart
-                result = RecyclingCart.add_to_recycling_list(
-                    item_name, category, quantity, notes
-                )
+                # Add to in-memory recycling list
+                if not hasattr(self, 'recycling_items'):
+                    self.recycling_items = []
+                
+                # Check if item already exists
+                existing_item = None
+                for item in self.recycling_items:
+                    if item['item_name'] == item_name and item['category'] == category:
+                        existing_item = item
+                        break
+                
+                if existing_item:
+                    existing_item['quantity'] += quantity
+                    if notes:
+                        existing_item['notes'] = f"{existing_item.get('notes', '')}; {notes}".strip('; ')
+                    message = f"Updated {item_name} quantity to {existing_item['quantity']}"
+                else:
+                    new_item = {
+                        'item_name': item_name,
+                        'category': category,
+                        'quantity': quantity,
+                        'notes': notes,
+                        'date_added': time.strftime('%Y-%m-%d %H:%M')
+                    }
+                    self.recycling_items.append(new_item)
+                    message = f"Added {quantity} {item_name} to recycling list"
                 
                 return jsonify({
                     'success': True,
-                    'message': result,
-                    'recycling_list': RecyclingCart.get_recycling_items()
+                    'message': message,
+                    'recycling_list': self.recycling_items
                 })
             
             except Exception as e:
@@ -297,10 +318,12 @@ class EcoSortBackend:
         @self.app.route('/api/recycling/list', methods=['GET'])
         def get_recycling_list():
             try:
-                items = RecyclingCart.get_recycling_items()
+                if not hasattr(self, 'recycling_items'):
+                    self.recycling_items = []
+                
                 return jsonify({
                     'success': True,
-                    'items': items
+                    'items': self.recycling_items
                 })
             
             except Exception as e:
@@ -310,10 +333,12 @@ class EcoSortBackend:
         @self.app.route('/api/recycling/clear', methods=['POST'])
         def clear_recycling_list():
             try:
-                result = RecyclingCart.clear_recycling_list()
+                if hasattr(self, 'recycling_items'):
+                    self.recycling_items = []
+                
                 return jsonify({
                     'success': True,
-                    'message': result
+                    'message': 'Recycling list cleared'
                 })
             
             except Exception as e:
@@ -477,15 +502,37 @@ class EcoSortBackend:
         """Get direct response from LLM without agent wrapper"""
         try:
             if hasattr(self, 'llm') and self.llm:
-                # Use the LLM directly for recycling guidance
-                simple_query = f"How to recycle and dispose: {query}. Give brief steps."
-                response = self.llm.complete(simple_query)
-                return str(response.text) if hasattr(response, 'text') else str(response)
+                # Create a comprehensive, specific query for complete recycling guidance
+                comprehensive_query = f"""Provide complete recycling guidance for: {query}
+
+Give specific instructions for:
+1. Preparation steps (cleaning, disassembly)
+2. Safety precautions
+3. Disposal method and location
+4. Environmental benefits
+
+Answer in 2-3 complete sentences as one connected response."""
+                
+                response = self.llm.complete(comprehensive_query)
+                response_text = str(response.text) if hasattr(response, 'text') else str(response)
+                
+                # Clean up the response to ensure it's complete and connected
+                response_text = response_text.strip()
+                if not response_text or len(response_text) < 30:
+                    # Fallback to basic comprehensive guidance
+                    item_name = query.replace("recycle", "").strip()
+                    return f"For {item_name}: Clean thoroughly and remove any non-recyclable components. Check local recycling guidelines for specific disposal requirements. Proper recycling helps reduce environmental waste and conserves natural resources."
+                
+                return response_text
             else:
-                return "Basic recycling guidance: Clean the item, sort by material type, place in appropriate recycling bin."
+                # Enhanced fallback with more comprehensive guidance
+                item_name = query.replace("recycle", "").strip()
+                return f"For {item_name}: Clean thoroughly and remove any non-recyclable components. Check local recycling guidelines for specific disposal requirements. Proper recycling helps reduce environmental waste and conserves natural resources."
+                
         except Exception as e:
             logger.error(f"Direct LLM query failed: {e}")
-            return "Basic recycling guidance: Clean the item, sort by material type, place in appropriate recycling bin."
+            item_name = query.replace("recycle", "").strip()
+            return f"For {item_name}: Clean thoroughly and remove any non-recyclable components. Check local recycling guidelines for specific disposal requirements. Proper recycling helps reduce environmental waste and conserves natural resources."
 
     def get_llm_guidance(self, detections: List[Dict]) -> List[Dict]:
         """Get LLM guidance for detected items using batch processing and dynamic code generation"""
@@ -835,59 +882,54 @@ class EcoSortBackend:
         category = detection['category']
         confidence = detection['confidence'] * 100
         
-        # Get basic classification info from tools
-        classification_result = WasteClassifier.classify_waste_type(
-            class_name, 
-            material_type=category
-        )
-        
-        # Get disassembly guidance if applicable
-        disassembly_result = WasteClassifier.get_disassembly_guidance(
-            class_name,
-            safety_level="detailed"
-        )
-        
         # Enhanced content generation
         class_title = class_name.replace('_', ' ').title()
+        
+        # Generate appropriate recycling instructions based on category
+        if 'plastic' in category.lower():
+            basic_instructions = "Check recycling number on bottom. Rinse clean before recycling."
+        elif 'electronic' in category.lower() or 'e-waste' in category.lower():
+            basic_instructions = "Take to certified e-waste facility. May contain valuable materials for recovery."
+        elif 'glass' in category.lower():
+            basic_instructions = "Remove lids/caps. Rinse clean. Check local glass recycling guidelines."
+        elif 'paper' in category.lower():
+            basic_instructions = "Keep dry. Remove any plastic components or tape."
+        elif 'metal' in category.lower():
+            basic_instructions = "Rinse clean. Remove labels if possible. Check for recycling codes."
+        else:
+            basic_instructions = "Check local waste management guidelines for proper disposal."
         
         content = f"""🎯 **AI Detection Results**: Detected {class_title} with {confidence:.1f}% confidence
         
 ♻️ **Waste Category**: {category}
 
-📋 **Specific Instructions**: {classification_result.get('recycling_instructions', 'Check local guidelines for this specific item type')}
+📋 **Recycling Instructions**: {basic_instructions}
 
 🔍 **Item Analysis**: This {class_title} requires {category.lower()} processing procedures.
 
-🌍 **Environmental Benefits**: Proper recycling of {class_title} helps:
-- Reduce landfill waste and environmental pollution
-- Conserve natural resources and energy
-- Support circular economy principles
-- Minimize carbon footprint
+🌍 **Environmental Benefits**: Proper recycling of {class_title} helps reduce landfill waste, conserve natural resources, and support circular economy principles.
+```
 
 💡 **Local Resources**: Contact your municipal waste management for {category.lower()} disposal locations."""
-        
-        # Add component info if available
-        if disassembly_result.get('recyclable_components'):
-            content += f"\n\n🔧 **Recoverable Materials**: {', '.join(disassembly_result['recyclable_components'])}"
         
         return {
             'detection': detection,
             'title': f'{class_title} - Enhanced Disposal Guide',
             'content': content,
-            'disassembly': disassembly_result.get('disassembly_steps', [
+            'disassembly': [
                 f'Research {class_title}-specific disassembly procedures',
                 'Gather appropriate safety equipment and tools',
                 'Work in a well-ventilated, safe environment',
                 'Separate components by material type for recycling'
-            ]),
-            'safety': disassembly_result.get('safety_warnings', [
+            ],
+            'safety': [
                 'Use appropriate personal protective equipment',
                 f'Handle {class_title} with care to avoid injury',
                 'Be aware of potential hazardous materials',
                 'Follow local safety regulations and guidelines'
-            ]),
+            ],
             'category': category,
-            'recycling_instructions': classification_result.get('recycling_instructions', 'Consult local recycling guidelines'),
+            'recycling_instructions': basic_instructions,
             'source': 'Enhanced Classification System'
         }
     

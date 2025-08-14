@@ -580,8 +580,8 @@ class EcoSortAI {
         (item) => `
             <div class="recycling-item fade-in">
                 <div class="item-info">
-                    <div class="item-name">${item.name}</div>
-                    <div class="item-category">${item.category}</div>
+                    <div class="item-name">${item.item_name || item.name || 'Unknown Item'}</div>
+                    <div class="item-category">${item.category || 'General Waste'}</div>
                     ${
                       item.confidence
                         ? `<small>Confidence: ${(item.confidence * 100).toFixed(
@@ -589,8 +589,13 @@ class EcoSortAI {
                           )}%</small>`
                         : ""
                     }
+                    ${
+                      item.notes
+                        ? `<small class="item-notes">${item.notes}</small>`
+                        : ""
+                    }
                 </div>
-                <div class="item-quantity">${item.quantity}</div>
+                <div class="item-quantity">${item.quantity || 1}</div>
             </div>
         `
       )

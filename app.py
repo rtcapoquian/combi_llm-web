@@ -65,8 +65,7 @@ from llama_index.core.agent import ReActChatFormatter
 from llama_index.core.llms import MessageRole
 from llama_index.core.callbacks import CallbackManager
 from llama_index.core.chat_engine.types import ChatMode
-# Agent tools
-from tools import WasteClassifier, RecyclingCart
+# Agent tools removed - using direct LLM responses now
 from system_prompt import react_system_header_str
 
 # Initialize logging
@@ -149,97 +148,11 @@ def setup_models(
     return llm, embedding
 
 
-def setup_tools()-> Tuple[FunctionTool, FunctionTool, FunctionTool, FunctionTool, FunctionTool, FunctionTool]:
-
+def setup_tools():
     """
-    Sets up and returns a collection of tools for waste classification, recycling guidance, and item tracking.
-    
-    Returns:
-        Tuple containing tools for waste classification, disassembly guidance, recycling list management,
-        viewing recycling items, clearing list, and finding disposal locations
+    Setup tools - now returns empty list since tools are removed
     """
-
-    waste_classifier_tool = FunctionTool.from_defaults(
-        fn=WasteClassifier.classify_waste_type,
-        name="classify_waste",
-        description="ALWAYS use this tool when users ask about classifying waste items or need recycling guidance. Required inputs: item_description (str), optional: material_type (str)"
-    )
-
-    disassembly_guidance_tool = FunctionTool.from_defaults(
-        fn=WasteClassifier.get_disassembly_guidance,
-        name="get_disassembly_guidance",
-        description="Use this tool when users need instructions for safely disassembling items before recycling. Required input: item_type (str), optional: safety_level (str - 'basic', 'detailed', 'professional')"
-    )
-
-    add_to_recycling_tool = FunctionTool.from_defaults(
-        fn=RecyclingCart.add_to_recycling_list,
-        name="add_to_recycling_list",
-        description="""
-        Use this tool WHENEVER a user wants to add items to their recycling tracking list.
-        
-        PARAMETERS:
-        - item_name (string): Name/description of the waste item (e.g., "Old smartphone", "Plastic bottles")
-        - category (string): Recycling category (e.g., "E-Waste", "Recyclable Plastic", "Metal Recyclable")
-        - quantity (int): Number of items, default is 1
-        - notes (string): Optional additional notes or special handling instructions
-        
-        RETURNS:
-        - A confirmation message and updated recycling list
-        
-        EXAMPLES:
-        To add e-waste: add_to_recycling_list(item_name="iPhone 12", category="E-Waste", quantity=1, notes="Screen cracked, battery needs special handling")
-        """
-    )
-    
-    view_recycling_list_tool = FunctionTool.from_defaults(
-        fn=RecyclingCart.get_recycling_items,
-        name="view_recycling_list",
-        description="""
-        Use this tool when a user wants to see what's in their recycling tracking list.
-        No parameters are required.
-        
-        RETURNS:
-        - A list of all items currently in the recycling list with their details
-        
-        EXAMPLES:
-        To view the current recycling list: view_recycling_list()
-        """
-    )
-    
-    clear_recycling_list_tool = FunctionTool.from_defaults(
-        fn=RecyclingCart.clear_recycling_list,
-        name="clear_recycling_list",
-        description="""
-        Use this tool when a user asks to empty or clear their recycling tracking list.
-        No parameters are required.
-        
-        RETURNS:
-        - A confirmation message that the recycling list has been cleared
-        
-        EXAMPLES:
-        To clear the recycling list: clear_recycling_list()
-        """
-    )
-
-    disposal_locations_tool = FunctionTool.from_defaults(
-        fn=RecyclingCart.get_disposal_locations,
-        name="find_disposal_locations",
-        description="""
-        Use this tool when users need to find where to dispose of or recycle specific types of waste.
-        
-        PARAMETERS:
-        - category (string): Waste category (e.g., "E-Waste", "Hazardous", "General Recyclables")
-        - location (string): Optional geographic location for local recommendations
-        
-        RETURNS:
-        - List of suggested disposal/recycling locations and contact information
-        
-        EXAMPLES:
-        To find e-waste disposal: find_disposal_locations(category="E-Waste", location="urban area")
-        """
-    )
-    
-    return waste_classifier_tool, disassembly_guidance_tool, add_to_recycling_tool, view_recycling_list_tool, clear_recycling_list_tool, disposal_locations_tool
+    return []
 
 
 def load_documents(data_folder_path: Path) -> VectorStoreIndex:
@@ -336,7 +249,7 @@ def run_app(agent: ReActAgent, public_interface: bool = False) -> None:
             str: Markdown-formatted HTML table of recycling list contents
                 or message indicating empty list
         """
-        recycling_items = RecyclingCart.get_recycling_items()
+        recycling_items = []  # Empty list since tools are removed
         if not recycling_items:
             return "### ♻️ Your Recycling List is Empty"
             
@@ -484,7 +397,7 @@ def run_app(agent: ReActAgent, public_interface: bool = False) -> None:
                 - Empty recycling display: Shows empty recycling list
         """
         agent.reset()
-        RecyclingCart._recycling_items = []
+        # RecyclingCart removed - no action needed
         return "", [], "🤔 Agent's Thought Process", update_recycling_display()
 
     def run()-> None:
