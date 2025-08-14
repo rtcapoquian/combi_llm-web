@@ -502,98 +502,103 @@ class EcoSortBackend:
         """Get direct response from LLM without agent wrapper"""
         try:
             if hasattr(self, 'llm') and self.llm:
-                # Create a comprehensive, specific query for complete recycling guidance
-                comprehensive_query = f"""Provide complete recycling guidance for: {query}
-
-Give specific instructions for:
-1. Preparation steps (cleaning, disassembly)
-2. Safety precautions
-3. Disposal method and location
-4. Environmental benefits
-
-Answer in 2-3 complete sentences as one connected response."""
+                # Create a very simple, concise query
+                simple_query = f"How to recycle {query}? Give 2 short sentences only."
                 
-                response = self.llm.complete(comprehensive_query)
+                response = self.llm.complete(simple_query)
                 response_text = str(response.text) if hasattr(response, 'text') else str(response)
                 
-                # Clean up the response to ensure it's complete and connected
+                # Clean up the response and keep it concise
                 response_text = response_text.strip()
-                if not response_text or len(response_text) < 30:
-                    # Fallback to basic comprehensive guidance
+                
+                # Remove repetitive text and keep only the first few sentences
+                sentences = response_text.split('. ')
+                if len(sentences) > 3:
+                    response_text = '. '.join(sentences[:3]) + '.'
+                
+                # Remove common repetitive phrases
+                repetitive_phrases = [
+                    'please note that this answer assumes',
+                    'if you have different questions',
+                    'please let me know',
+                    'thank you for your question',
+                    'have a great day',
+                    'thank you for using my service',
+                    'feel free to ask'
+                ]
+                
+                for phrase in repetitive_phrases:
+                    response_text = response_text.lower().replace(phrase.lower(), '')
+                
+                # Capitalize first letter and clean up
+                response_text = response_text.strip('. ').capitalize()
+                if response_text and not response_text.endswith('.'):
+                    response_text += '.'
+                
+                if not response_text or len(response_text) < 20:
+                    # Simple fallback
                     item_name = query.replace("recycle", "").strip()
-                    return f"For {item_name}: Clean thoroughly and remove any non-recyclable components. Check local recycling guidelines for specific disposal requirements. Proper recycling helps reduce environmental waste and conserves natural resources."
+                    return f"Clean the {item_name} thoroughly and place in appropriate recycling bin. Check local recycling guidelines for specific requirements."
                 
                 return response_text
             else:
-                # Enhanced fallback with more comprehensive guidance
+                # Simple fallback
                 item_name = query.replace("recycle", "").strip()
-                return f"For {item_name}: Clean thoroughly and remove any non-recyclable components. Check local recycling guidelines for specific disposal requirements. Proper recycling helps reduce environmental waste and conserves natural resources."
+                return f"Clean the {item_name} thoroughly and place in appropriate recycling bin. Check local recycling guidelines for specific requirements."
                 
         except Exception as e:
             logger.error(f"Direct LLM query failed: {e}")
             item_name = query.replace("recycle", "").strip()
-            return f"For {item_name}: Clean thoroughly and remove any non-recyclable components. Check local recycling guidelines for specific disposal requirements. Proper recycling helps reduce environmental waste and conserves natural resources."
+            return f"Clean the {item_name} thoroughly and place in appropriate recycling bin. Check local recycling guidelines for specific requirements."
 
     def get_llm_guidance(self, detections: List[Dict]) -> List[Dict]:
-        """Get LLM guidance for detected items using batch processing and dynamic code generation"""
+        """Get LLM guidance for detected items - processing each item individually for better results"""
         try:
             if not detections:
                 return []
             
-            logger.info(f"Processing guidance for {len(detections)} items using LLM agent: {self.llm_agent is not None}")
+            logger.info(f"Processing guidance for {len(detections)} items individually")
             
-            if self.llm_agent is not None:
+            # Process each item individually instead of batch processing
+            guidance_list = []
+            for detection in detections:
                 try:
-                    # Create a comprehensive prompt for all detected items
-                    items_summary = []
-                    for i, detection in enumerate(detections, 1):
-                        class_name = detection['class']
-                        category = detection['category']
-                        confidence = detection['confidence'] * 100
-                        items_summary.append(f"{i}. {class_name} (Category: {category}, Confidence: {confidence:.1f}%)")
+                    class_name = detection['class']
                     
-                    items_list = "\n".join(items_summary)
+                    # Simple individual query
+                    query = f"recycle {class_name.replace('_', ' ')}"
                     
-                    # Create simple, direct query
-                    batch_query = f"How to recycle these waste items: {', '.join([d['class'].replace('_', ' ') for d in detections])}"
+                    # Try agent first, then fallback to direct LLM
+                    if self.llm_agent is not None:
+                        try:
+                            simple_query = f"How to recycle {class_name.replace('_', ' ')}?"
+                            response = self.llm_agent.chat(simple_query)
+                            response_text = str(response.response) if hasattr(response, 'response') else str(response)
+                            
+                            # Check if response is adequate
+                            if (len(response_text) < 20 or 
+                                any(phrase in response_text.lower() for phrase in ['unable to assist', 'no tool available', 'cannot help', 'sorry'])):
+                                logger.warning(f"Agent response inadequate for {class_name}, using direct LLM")
+                                response_text = self.get_direct_llm_response(query)
+                        except Exception as e:
+                            logger.error(f"Agent query failed for {class_name}: {e}")
+                            response_text = self.get_direct_llm_response(query)
+                    else:
+                        response_text = self.get_direct_llm_response(query)
                     
-                    logger.info(f"Sending batch query to LLM agent for {len(detections)} items...")
-                    
-                    try:
-                        # Get response from LLM agent for all items at once
-                        response = self.llm_agent.chat(batch_query)
-                        response_text = str(response.response) if hasattr(response, 'response') else str(response)
-                        
-                        # If response is too short or contains error messages, try direct LLM
-                        if len(response_text) < 50 or any(phrase in response_text.lower() for phrase in ['unable to assist', 'no tool available', 'cannot help', 'sorry']):
-                            logger.warning("Agent response inadequate, trying direct LLM query")
-                            response_text = self.get_direct_llm_response(batch_query)
-                        
-                    except Exception as e:
-                        logger.error(f"Agent failed: {e}, trying direct LLM")
-                        response_text = self.get_direct_llm_response(batch_query)
-                    
-                    logger.info(f"LLM agent batch response received: {len(response_text)} characters")
-                    
-                    # Parse the batch response and split it per item
-                    guidance_list = self.parse_batch_llm_response(detections, response_text)
-                    
-                    # Add source information
-                    for guidance in guidance_list:
-                        guidance['source'] = 'LLM Agent with RAG (Qwen2 - Batch Processed)'
-                    
-                    logger.info(f"Successfully generated LLM guidance for {len(guidance_list)} items")
-                    return guidance_list
+                    # Parse individual response
+                    guidance = self.parse_individual_llm_response(detection, response_text)
+                    guidance['source'] = 'AI Assistant'
+                    guidance_list.append(guidance)
                     
                 except Exception as e:
-                    logger.error(f"LLM agent batch processing error: {e}")
-                    logger.info("Falling back to individual item processing...")
-                    
-                    # Fall back to individual processing
-                    return self.get_individual_llm_guidance(detections)
-            else:
-                logger.warning("No LLM agent available, using enhanced basic guidance")
-                return [self.get_enhanced_basic_guidance(det) for det in detections]
+                    logger.error(f"Error processing {detection['class']}: {e}")
+                    # Use basic guidance as fallback
+                    guidance = self.get_enhanced_basic_guidance(detection)
+                    guidance_list.append(guidance)
+            
+            logger.info(f"Successfully generated guidance for {len(guidance_list)} items")
+            return guidance_list
                 
         except Exception as e:
             logger.error(f"LLM guidance error: {e}")
@@ -665,115 +670,118 @@ Answer in 2-3 complete sentences as one connected response."""
             return [self.parse_individual_llm_response(det, response_text) for det in detections]
     
     def parse_individual_llm_response(self, detection: Dict, response_text: str) -> Dict:
-        """Parse individual LLM response into structured guidance format"""
-        class_name = detection['class'].replace('_', ' ').title()
-        
-        logger.debug(f"Parsing individual LLM response for {class_name}")
-        
-        # Extract specific sections using more sophisticated parsing
-        disassembly_steps = []
-        safety_warnings = []
-        code_snippets = []
-        
-        lines = response_text.split('\n')
-        current_section = None
-        
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            
-            # Identify section headers with more patterns
-            line_lower = line.lower()
-            if any(keyword in line_lower for keyword in ['disassembly', 'dismantle', 'take apart', 'breakdown']):
-                current_section = 'disassembly'
-                continue
-            elif any(keyword in line_lower for keyword in ['safety', 'precaution', 'warning', 'hazard', 'danger']):
-                current_section = 'safety'
-                continue
-            elif any(keyword in line_lower for keyword in ['code', 'script', 'procedure', 'algorithm']):
-                current_section = 'code'
-                continue
-            
-            # Extract content based on current section
-            if line.startswith(('1.', '2.', '3.', '4.', '5.', '6.', '7.', '8.', '9.', '10.', '-', '•', '*', '→')):
-                cleaned_line = line.lstrip('1234567890.-•*→ ')
-                if current_section == 'disassembly' and cleaned_line:
-                    disassembly_steps.append(cleaned_line)
-                elif current_section == 'safety' and cleaned_line:
-                    safety_warnings.append(cleaned_line)
-                elif current_section == 'code' and cleaned_line:
-                    code_snippets.append(cleaned_line)
-            elif line.startswith(('```', 'def ', 'function', 'import ', 'from ')):
-                # Code block detected
-                code_snippets.append(line)
-        
-        # If no specific steps found, extract from full text
-        if not disassembly_steps:
-            # Look for step-like patterns in the full text
-            step_patterns = ['step 1', 'step 2', 'first,', 'second,', 'then,', 'next,', 'finally,']
-            for line in lines:
-                if any(pattern in line.lower() for pattern in step_patterns):
-                    disassembly_steps.append(line.strip())
-        
-        # Generate enhanced content
-        enhanced_content = self.enhance_llm_content(detection, response_text, code_snippets)
-        
-        # Combine code snippets into disassembly if available
-        if code_snippets:
-            disassembly_steps.extend([f"Code: {code}" for code in code_snippets[:3]])
-        
-        # Provide defaults if nothing found
-        if not disassembly_steps:
-            disassembly_steps = ['Follow the detailed guidance provided above', 'Refer to specific instructions in the AI guidance']
-            
-        if not safety_warnings:
-            safety_warnings = ['Follow safety precautions as detailed in the guidance above']
-        
-        return {
-            'detection': detection,
-            'title': f'{class_name} - AI-Generated Comprehensive Guide',
-            'content': enhanced_content,
-            'disassembly': disassembly_steps[:15],  # Allow more steps
-            'safety': safety_warnings[:10],
-            'code_snippets': code_snippets[:5] if code_snippets else [],
-            'category': detection['category'],
-            'recycling_instructions': 'See detailed AI-generated guidance above',
-            'source': 'LLM Agent with Dynamic Code Generation'
-        }
-    
-    def enhance_llm_content(self, detection: Dict, response_text: str, code_snippets: List[str]) -> str:
-        """Enhance LLM content with additional formatting and code integration"""
+        """Parse individual LLM response into clean, structured guidance format"""
         class_name = detection['class'].replace('_', ' ').title()
         confidence = detection['confidence'] * 100
         category = detection['category']
         
-        # Add header information
-        enhanced_content = f"""🤖 **AI-Generated Analysis for {class_name}**
-📊 **Detection Confidence**: {confidence:.1f}%
-🗂️ **Category**: {category}
-
----
-
-{response_text}"""
+        # Clean the response text
+        clean_response = self.clean_llm_response(response_text)
         
-        # Add code section if available
+        # Simple, clean content formatting without verbose footers
+        enhanced_content = f"""**{class_name} Recycling Guide**
+
+{clean_response}
+
+**Category**: {category} | **Confidence**: {confidence:.1f}%"""
+        
+        # Simple disassembly and safety steps
+        disassembly_steps = [
+            f'Clean the {class_name.lower()} thoroughly',
+            'Remove any non-recyclable parts if needed',
+            'Place in appropriate recycling container'
+        ]
+        
+        safety_warnings = [
+            'Handle with care to avoid injury',
+            'Follow local recycling guidelines'
+        ]
+        
+        return {
+            'detection': detection,
+            'title': f'{class_name} - Recycling Guide',
+            'content': enhanced_content,
+            'disassembly': disassembly_steps,
+            'safety': safety_warnings,
+            'category': category,
+            'recycling_instructions': clean_response,
+            'source': 'AI Assistant'
+        }
+    
+    def clean_llm_response(self, response_text: str) -> str:
+        """Clean and simplify LLM response text"""
+        if not response_text:
+            return "Follow local recycling guidelines for proper disposal."
+        
+        # Remove repetitive and verbose phrases
+        repetitive_phrases = [
+            'please note that this answer assumes',
+            'if you have different questions',
+            'please let me know',
+            'thank you for your question',
+            'have a great day',
+            'thank you for using my service',
+            'feel free to ask',
+            'if you have any further questions',
+            'please note that',
+            'this answer assumes',
+            'i can assist you',
+            'do my best to provide',
+            'helpful answers',
+            'you have any further questions',
+            'thank you for using my service',
+            'have a great day'
+        ]
+        
+        # Clean the text
+        clean_text = response_text.lower()
+        for phrase in repetitive_phrases:
+            clean_text = clean_text.replace(phrase, '')
+        
+        # Split into sentences and keep only the first 3 meaningful sentences
+        sentences = clean_text.split('. ')
+        meaningful_sentences = []
+        
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if (sentence and 
+                len(sentence) > 10 and 
+                not any(skip in sentence for skip in ['thank you', 'please note', 'feel free'])):
+                meaningful_sentences.append(sentence.capitalize())
+                if len(meaningful_sentences) >= 3:
+                    break
+        
+        if meaningful_sentences:
+            result = '. '.join(meaningful_sentences)
+            if not result.endswith('.'):
+                result += '.'
+            return result
+        else:
+            return "Follow local recycling guidelines for proper disposal."
+    
+    def enhance_llm_content(self, detection: Dict, response_text: str, code_snippets: List[str]) -> str:
+        """Enhance LLM content with simple, clean formatting"""
+        class_name = detection['class'].replace('_', ' ').title()
+        confidence = detection['confidence'] * 100
+        category = detection['category']
+        
+        # Clean the response text first
+        clean_response = self.clean_llm_response(response_text)
+        
+        # Create simple, clean content without verbose footers
+        enhanced_content = f"""**{class_name} Recycling Guide**
+
+{clean_response}
+
+**Category**: {category}
+**Detection Confidence**: {confidence:.1f}%"""
+        
+        # Add code section if available (but keep it simple)
         if code_snippets:
             enhanced_content += f"""
 
----
-💻 **Generated Code/Procedures**:
-
-```
-{chr(10).join(code_snippets[:3])}
-```"""
-        
-        # Add footer with AI attribution
-        enhanced_content += f"""
-
----
-🔬 **Analysis Source**: Advanced AI reasoning with Taiwan waste management knowledge base
-⚡ **Processing**: Real-time LLM generation with RAG enhancement"""
+**Additional Procedures**:
+{chr(10).join(code_snippets[:2])}"""
         
         return enhanced_content
     
@@ -899,66 +907,67 @@ Answer in 2-3 complete sentences as one connected response."""
         else:
             basic_instructions = "Check local waste management guidelines for proper disposal."
         
-        content = f"""🎯 **AI Detection Results**: Detected {class_title} with {confidence:.1f}% confidence
-        
-♻️ **Waste Category**: {category}
+        content = f"""🎯 **Detection**: {class_title} ({confidence:.1f}% confidence)
+♻️ **Category**: {category}
 
-📋 **Recycling Instructions**: {basic_instructions}
+📋 **Instructions**: {basic_instructions}
 
-🔍 **Item Analysis**: This {class_title} requires {category.lower()} processing procedures.
-
-🌍 **Environmental Benefits**: Proper recycling of {class_title} helps reduce landfill waste, conserve natural resources, and support circular economy principles.
-```
-
-💡 **Local Resources**: Contact your municipal waste management for {category.lower()} disposal locations."""
+🌍 **Impact**: Proper recycling helps reduce waste and conserve resources."""
         
         return {
             'detection': detection,
-            'title': f'{class_title} - Enhanced Disposal Guide',
+            'title': f'{class_title} - Recycling Guide',
             'content': content,
             'disassembly': [
-                f'Research {class_title}-specific disassembly procedures',
-                'Gather appropriate safety equipment and tools',
-                'Work in a well-ventilated, safe environment',
-                'Separate components by material type for recycling'
+                f'Clean the {class_title.lower()} thoroughly',
+                'Remove any non-recyclable parts',
+                'Place in appropriate recycling container'
             ],
             'safety': [
-                'Use appropriate personal protective equipment',
-                f'Handle {class_title} with care to avoid injury',
-                'Be aware of potential hazardous materials',
-                'Follow local safety regulations and guidelines'
+                'Handle with care to avoid injury',
+                'Follow local safety guidelines'
             ],
             'category': category,
             'recycling_instructions': basic_instructions,
-            'source': 'Enhanced Classification System'
+            'source': 'Basic Classification'
         }
     
     
     def setup_websocket_server(self):
         """Setup WebSocket server for real-time communication"""
-        async def handle_websocket(websocket, path):
-            self.ws_connections.add(websocket)
-            logger.info(f"WebSocket client connected: {websocket.remote_address}")
+        try:
+            async def handle_websocket(websocket, path):
+                self.ws_connections.add(websocket)
+                logger.info(f"WebSocket client connected: {websocket.remote_address}")
+                
+                try:
+                    async for message in websocket:
+                        await self.handle_websocket_message(websocket, message)
+                except websockets.exceptions.ConnectionClosed:
+                    logger.info(f"WebSocket client disconnected: {websocket.remote_address}")
+                finally:
+                    self.ws_connections.discard(websocket)
             
-            try:
-                async for message in websocket:
-                    await self.handle_websocket_message(websocket, message)
-            except websockets.exceptions.ConnectionClosed:
-                logger.info(f"WebSocket client disconnected: {websocket.remote_address}")
-            finally:
-                self.ws_connections.discard(websocket)
-        
-        def start_websocket_server():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            start_server = websockets.serve(handle_websocket, "localhost", 8765)
-            logger.info("WebSocket server started on ws://localhost:8765")
-            loop.run_until_complete(start_server)
-            loop.run_forever()
-        
-        # Start WebSocket server in separate thread
-        ws_thread = Thread(target=start_websocket_server, daemon=True)
-        ws_thread.start()
+            def start_websocket_server():
+                try:
+                    # Create new event loop for this thread
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    
+                    start_server = websockets.serve(handle_websocket, "localhost", 8765)
+                    logger.info("WebSocket server starting on ws://localhost:8765")
+                    
+                    loop.run_until_complete(start_server)
+                    loop.run_forever()
+                except Exception as e:
+                    logger.warning(f"WebSocket server failed to start: {e}")
+            
+            # Start WebSocket server in separate thread
+            ws_thread = Thread(target=start_websocket_server, daemon=True)
+            ws_thread.start()
+            
+        except Exception as e:
+            logger.warning(f"WebSocket setup failed: {e}. Continuing without WebSocket support.")
     
     async def handle_websocket_message(self, websocket, message):
         """Handle incoming WebSocket messages"""

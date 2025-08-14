@@ -418,13 +418,15 @@ class EcoSortAI {
       // Check if we have an annotated image path from the backend
       const firstDetection = detections[0];
       if (firstDetection.annotated_image_path) {
-        const annotatedSection = document.getElementById("annotatedImageSection");
+        const annotatedSection = document.getElementById(
+          "annotatedImageSection"
+        );
         const annotatedImage = document.getElementById("annotatedImage");
-        
+
         if (annotatedSection && annotatedImage) {
           // Construct the URL for the annotated image
           const imageUrl = `/annotated/${firstDetection.annotated_image_path}`;
-          
+
           // Set the image source and show the section
           annotatedImage.src = imageUrl;
           annotatedImage.onload = () => {
@@ -580,8 +582,12 @@ class EcoSortAI {
         (item) => `
             <div class="recycling-item fade-in">
                 <div class="item-info">
-                    <div class="item-name">${item.item_name || item.name || 'Unknown Item'}</div>
-                    <div class="item-category">${item.category || 'General Waste'}</div>
+                    <div class="item-name">${
+                      item.item_name || item.name || "Unknown Item"
+                    }</div>
+                    <div class="item-category">${
+                      item.category || "General Waste"
+                    }</div>
                     ${
                       item.confidence
                         ? `<small>Confidence: ${(item.confidence * 100).toFixed(
