@@ -1,0 +1,4 @@
+data/
+model/
+model_npu/
+best.pt
