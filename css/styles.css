@@ -745,3 +745,55 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #236b37;
 }
+
+/* Annotated Image Section Styles */
+.annotated-image-section {
+  margin-top: 20px;
+  padding: 20px;
+  background: var(--surface-color);
+  border-radius: var(--border-radius);
+  box-shadow: var(--shadow);
+  border: 2px solid var(--accent-color);
+}
+
+.annotated-image-section h4 {
+  color: var(--primary-color);
+  margin-bottom: 15px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.annotated-image-section .image-container {
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #f8f9fa;
+}
+
+.annotated-image-section img {
+  transition: transform 0.3s ease;
+  cursor: pointer;
+}
+
+.annotated-image-section img:hover {
+  transform: scale(1.02);
+}
+
+/* Loading state for annotated image */
+.annotated-image-section .image-container::before {
+  content: "🔄 Loading annotated image...";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--text-muted);
+  font-size: 14px;
+  z-index: 1;
+}
+
+.annotated-image-section img[src] + .image-container::before {
+  display: none;
+}

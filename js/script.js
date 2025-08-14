@@ -403,11 +403,41 @@ class EcoSortAI {
       this.showDetectionBox(detection.bbox, index);
     });
 
+    // Display annotated image if available
+    this.displayAnnotatedImage(detections);
+
     this.updateStatus(
       "yoloStatus",
       `${detections.length} items detected`,
       "success"
     );
+  }
+
+  displayAnnotatedImage(detections) {
+    if (detections && detections.length > 0) {
+      // Check if we have an annotated image path from the backend
+      const firstDetection = detections[0];
+      if (firstDetection.annotated_image_path) {
+        const annotatedSection = document.getElementById("annotatedImageSection");
+        const annotatedImage = document.getElementById("annotatedImage");
+        
+        if (annotatedSection && annotatedImage) {
+          // Construct the URL for the annotated image
+          const imageUrl = `/annotated/${firstDetection.annotated_image_path}`;
+          
+          // Set the image source and show the section
+          annotatedImage.src = imageUrl;
+          annotatedImage.onload = () => {
+            annotatedSection.style.display = "block";
+            console.log("Annotated image loaded successfully");
+          };
+          annotatedImage.onerror = () => {
+            console.error("Failed to load annotated image");
+            annotatedSection.style.display = "none";
+          };
+        }
+      }
+    }
   }
 
   displayNoDetections() {

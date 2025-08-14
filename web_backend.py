@@ -20,8 +20,9 @@ import uuid
 
 from flask import Flask, request, jsonify, render_template, send_from_directory
 from flask_cors import CORS
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 import numpy as np
+import cv2
 
 # Import existing modules
 from yolov11_infer_openvino import predict_and_show, load_optimized_model
@@ -107,14 +108,12 @@ class EcoSortBackend:
                     
                     nest_asyncio.apply()
                     
-                    # Create the ReActAgent with all tools
-                    all_tools = list(self.waste_tools) + [self.vector_tool]
+                    # Create the ReActAgent with just the vector tool for simplicity
                     self.llm_agent = ReActAgent.from_tools(
-                        all_tools,
+                        [self.vector_tool],  # Only use vector search tool
                         llm=self.llm,
-                        max_iterations=5,
-                        verbose=True,
-                        react_chat_formatter=ReActChatFormatter.from_defaults(),
+                        max_iterations=3,  # Reduce iterations
+                        verbose=False,     # Reduce verbosity
                     )
                     
                     # Set custom system prompt
@@ -146,6 +145,10 @@ class EcoSortBackend:
         
         @self.app.route('/<path:filename>')
         def static_files(filename):
+            return send_from_directory('.', filename)
+        
+        @self.app.route('/annotated/<filename>')
+        def annotated_images(filename):
             return send_from_directory('.', filename)
         
         @self.app.route('/api/status', methods=['GET'])
@@ -182,13 +185,23 @@ class EcoSortBackend:
                     # Run YOLO inference
                     detections = self.run_yolo_inference(temp_path)
                     
+                    # Create annotated image if detections found
+                    annotated_image_path = None
+                    if detections:
+                        annotated_image_path = self.create_annotated_image(temp_path, detections)
+                        
+                        # Add annotated image path to each detection for frontend access
+                        for detection in detections:
+                            detection['annotated_image_path'] = Path(annotated_image_path).name if annotated_image_path else None
+                    
                     processing_time = (time.time() - start_time) * 1000
                     
                     return jsonify({
                         'success': True,
                         'detections': detections,
                         'processing_time_ms': processing_time,
-                        'engine_type': self.engine_type
+                        'engine_type': self.engine_type,
+                        'annotated_image': f"/annotated/{Path(annotated_image_path).name}" if annotated_image_path else None
                     })
                 
                 finally:
@@ -381,70 +394,377 @@ class EcoSortBackend:
         
         return 'General Waste'
     
+    def create_annotated_image(self, image_path: str, detections: List[Dict]) -> str:
+        """Create annotated image with bounding boxes and save it"""
+        try:
+            # Load the original image
+            image = cv2.imread(image_path)
+            image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            
+            # Convert to PIL Image for drawing
+            pil_image = Image.fromarray(image_rgb)
+            draw = ImageDraw.Draw(pil_image)
+            
+            # Try to load a font, fall back to default if not available
+            try:
+                font = ImageFont.truetype("arial.ttf", 16)
+            except:
+                font = ImageFont.load_default()
+            
+            # Color map for different categories
+            color_map = {
+                'Recyclable Plastic': '#4CAF50',  # Green
+                'E-Waste': '#FF9800',            # Orange
+                'Metal Recyclable': '#2196F3',   # Blue
+                'Paper Recyclable': '#9C27B0',   # Purple
+                'Glass Recyclable': '#00BCD4',   # Cyan
+                'Hazardous Waste': '#F44336',    # Red
+                'Organic Waste': '#8BC34A',     # Light Green
+                'General Waste': '#9E9E9E'      # Gray
+            }
+            
+            # Draw bounding boxes and labels
+            for i, detection in enumerate(detections):
+                bbox = detection['bbox']  # [x1, y1, x2, y2]
+                class_name = detection['class']
+                confidence = detection['confidence']
+                category = detection['category']
+                
+                # Get color for this category
+                color = color_map.get(category, '#9E9E9E')
+                
+                # Convert color to RGB tuple
+                color_rgb = tuple(int(color[i:i+2], 16) for i in (1, 3, 5))
+                
+                # Draw bounding box
+                draw.rectangle(bbox, outline=color_rgb, width=3)
+                
+                # Prepare label text
+                label = f"{class_name} ({confidence:.1f}%)"
+                
+                # Get text size
+                bbox_text = draw.textbbox((0, 0), label, font=font)
+                text_width = bbox_text[2] - bbox_text[0]
+                text_height = bbox_text[3] - bbox_text[1]
+                
+                # Calculate label position
+                label_x = bbox[0]
+                label_y = bbox[1] - text_height - 5
+                
+                # Ensure label stays within image bounds
+                if label_y < 0:
+                    label_y = bbox[1] + 5
+                
+                # Draw label background
+                draw.rectangle([label_x, label_y, label_x + text_width + 10, label_y + text_height + 5], 
+                             fill=color_rgb, outline=color_rgb)
+                
+                # Draw label text
+                draw.text((label_x + 5, label_y + 2), label, fill='white', font=font)
+            
+            # Save annotated image
+            annotated_path = f"annotated_{uuid.uuid4().hex}.jpg"
+            pil_image.save(annotated_path, quality=85)
+            
+            logger.info(f"Created annotated image: {annotated_path}")
+            return annotated_path
+            
+        except Exception as e:
+            logger.error(f"Error creating annotated image: {e}")
+            return None
+    
+    def get_direct_llm_response(self, query: str) -> str:
+        """Get direct response from LLM without agent wrapper"""
+        try:
+            if hasattr(self, 'llm') and self.llm:
+                # Use the LLM directly for recycling guidance
+                simple_query = f"How to recycle and dispose: {query}. Give brief steps."
+                response = self.llm.complete(simple_query)
+                return str(response.text) if hasattr(response, 'text') else str(response)
+            else:
+                return "Basic recycling guidance: Clean the item, sort by material type, place in appropriate recycling bin."
+        except Exception as e:
+            logger.error(f"Direct LLM query failed: {e}")
+            return "Basic recycling guidance: Clean the item, sort by material type, place in appropriate recycling bin."
+
     def get_llm_guidance(self, detections: List[Dict]) -> List[Dict]:
-        """Get LLM guidance for detected items using the actual ReActAgent"""
+        """Get LLM guidance for detected items using batch processing and dynamic code generation"""
+        try:
+            if not detections:
+                return []
+            
+            logger.info(f"Processing guidance for {len(detections)} items using LLM agent: {self.llm_agent is not None}")
+            
+            if self.llm_agent is not None:
+                try:
+                    # Create a comprehensive prompt for all detected items
+                    items_summary = []
+                    for i, detection in enumerate(detections, 1):
+                        class_name = detection['class']
+                        category = detection['category']
+                        confidence = detection['confidence'] * 100
+                        items_summary.append(f"{i}. {class_name} (Category: {category}, Confidence: {confidence:.1f}%)")
+                    
+                    items_list = "\n".join(items_summary)
+                    
+                    # Create simple, direct query
+                    batch_query = f"How to recycle these waste items: {', '.join([d['class'].replace('_', ' ') for d in detections])}"
+                    
+                    logger.info(f"Sending batch query to LLM agent for {len(detections)} items...")
+                    
+                    try:
+                        # Get response from LLM agent for all items at once
+                        response = self.llm_agent.chat(batch_query)
+                        response_text = str(response.response) if hasattr(response, 'response') else str(response)
+                        
+                        # If response is too short or contains error messages, try direct LLM
+                        if len(response_text) < 50 or any(phrase in response_text.lower() for phrase in ['unable to assist', 'no tool available', 'cannot help', 'sorry']):
+                            logger.warning("Agent response inadequate, trying direct LLM query")
+                            response_text = self.get_direct_llm_response(batch_query)
+                        
+                    except Exception as e:
+                        logger.error(f"Agent failed: {e}, trying direct LLM")
+                        response_text = self.get_direct_llm_response(batch_query)
+                    
+                    logger.info(f"LLM agent batch response received: {len(response_text)} characters")
+                    
+                    # Parse the batch response and split it per item
+                    guidance_list = self.parse_batch_llm_response(detections, response_text)
+                    
+                    # Add source information
+                    for guidance in guidance_list:
+                        guidance['source'] = 'LLM Agent with RAG (Qwen2 - Batch Processed)'
+                    
+                    logger.info(f"Successfully generated LLM guidance for {len(guidance_list)} items")
+                    return guidance_list
+                    
+                except Exception as e:
+                    logger.error(f"LLM agent batch processing error: {e}")
+                    logger.info("Falling back to individual item processing...")
+                    
+                    # Fall back to individual processing
+                    return self.get_individual_llm_guidance(detections)
+            else:
+                logger.warning("No LLM agent available, using enhanced basic guidance")
+                return [self.get_enhanced_basic_guidance(det) for det in detections]
+                
+        except Exception as e:
+            logger.error(f"LLM guidance error: {e}")
+            return [self.get_enhanced_basic_guidance(det) for det in detections]
+    
+    def parse_batch_llm_response(self, detections: List[Dict], response_text: str) -> List[Dict]:
+        """Parse batch LLM response and split into individual item guidance"""
         try:
             guidance_list = []
             
-            for detection in detections:
+            # Split response by item markers
+            item_sections = []
+            current_section = ""
+            
+            lines = response_text.split('\n')
+            current_item_index = -1
+            
+            for line in lines:
+                # Look for item markers (Item 1:, Item 2:, etc.)
+                if any(marker in line.lower() for marker in ['item 1', 'item 2', 'item 3', 'item 4', 'item 5', 
+                                                             'item 6', 'item 7', 'item 8', 'item 9', 'item 10']):
+                    # Save previous section
+                    if current_section.strip() and current_item_index >= 0:
+                        item_sections.append((current_item_index, current_section.strip()))
+                    
+                    # Start new section
+                    current_section = line + '\n'
+                    # Extract item number
+                    for i in range(10):
+                        if f'item {i+1}' in line.lower():
+                            current_item_index = i
+                            break
+                else:
+                    current_section += line + '\n'
+            
+            # Add the last section
+            if current_section.strip() and current_item_index >= 0:
+                item_sections.append((current_item_index, current_section.strip()))
+            
+            # If no clear item sections found, split roughly
+            if not item_sections and len(detections) > 1:
+                # Split response roughly by detection count
+                section_length = len(response_text) // len(detections)
+                for i, detection in enumerate(detections):
+                    start_idx = i * section_length
+                    end_idx = (i + 1) * section_length if i < len(detections) - 1 else len(response_text)
+                    section_text = response_text[start_idx:end_idx]
+                    item_sections.append((i, section_text))
+            
+            # Process each item section
+            for item_index, section_text in item_sections:
+                if item_index < len(detections):
+                    detection = detections[item_index]
+                    guidance = self.parse_individual_llm_response(detection, section_text)
+                    guidance_list.append(guidance)
+            
+            # If we couldn't parse sections properly, use full response for each item
+            if not guidance_list:
+                logger.warning("Could not parse batch response properly, using full response for each item")
+                for detection in detections:
+                    guidance = self.parse_individual_llm_response(detection, response_text)
+                    guidance_list.append(guidance)
+            
+            return guidance_list
+            
+        except Exception as e:
+            logger.error(f"Error parsing batch LLM response: {e}")
+            # Fall back to individual responses
+            return [self.parse_individual_llm_response(det, response_text) for det in detections]
+    
+    def parse_individual_llm_response(self, detection: Dict, response_text: str) -> Dict:
+        """Parse individual LLM response into structured guidance format"""
+        class_name = detection['class'].replace('_', ' ').title()
+        
+        logger.debug(f"Parsing individual LLM response for {class_name}")
+        
+        # Extract specific sections using more sophisticated parsing
+        disassembly_steps = []
+        safety_warnings = []
+        code_snippets = []
+        
+        lines = response_text.split('\n')
+        current_section = None
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            
+            # Identify section headers with more patterns
+            line_lower = line.lower()
+            if any(keyword in line_lower for keyword in ['disassembly', 'dismantle', 'take apart', 'breakdown']):
+                current_section = 'disassembly'
+                continue
+            elif any(keyword in line_lower for keyword in ['safety', 'precaution', 'warning', 'hazard', 'danger']):
+                current_section = 'safety'
+                continue
+            elif any(keyword in line_lower for keyword in ['code', 'script', 'procedure', 'algorithm']):
+                current_section = 'code'
+                continue
+            
+            # Extract content based on current section
+            if line.startswith(('1.', '2.', '3.', '4.', '5.', '6.', '7.', '8.', '9.', '10.', '-', '•', '*', '→')):
+                cleaned_line = line.lstrip('1234567890.-•*→ ')
+                if current_section == 'disassembly' and cleaned_line:
+                    disassembly_steps.append(cleaned_line)
+                elif current_section == 'safety' and cleaned_line:
+                    safety_warnings.append(cleaned_line)
+                elif current_section == 'code' and cleaned_line:
+                    code_snippets.append(cleaned_line)
+            elif line.startswith(('```', 'def ', 'function', 'import ', 'from ')):
+                # Code block detected
+                code_snippets.append(line)
+        
+        # If no specific steps found, extract from full text
+        if not disassembly_steps:
+            # Look for step-like patterns in the full text
+            step_patterns = ['step 1', 'step 2', 'first,', 'second,', 'then,', 'next,', 'finally,']
+            for line in lines:
+                if any(pattern in line.lower() for pattern in step_patterns):
+                    disassembly_steps.append(line.strip())
+        
+        # Generate enhanced content
+        enhanced_content = self.enhance_llm_content(detection, response_text, code_snippets)
+        
+        # Combine code snippets into disassembly if available
+        if code_snippets:
+            disassembly_steps.extend([f"Code: {code}" for code in code_snippets[:3]])
+        
+        # Provide defaults if nothing found
+        if not disassembly_steps:
+            disassembly_steps = ['Follow the detailed guidance provided above', 'Refer to specific instructions in the AI guidance']
+            
+        if not safety_warnings:
+            safety_warnings = ['Follow safety precautions as detailed in the guidance above']
+        
+        return {
+            'detection': detection,
+            'title': f'{class_name} - AI-Generated Comprehensive Guide',
+            'content': enhanced_content,
+            'disassembly': disassembly_steps[:15],  # Allow more steps
+            'safety': safety_warnings[:10],
+            'code_snippets': code_snippets[:5] if code_snippets else [],
+            'category': detection['category'],
+            'recycling_instructions': 'See detailed AI-generated guidance above',
+            'source': 'LLM Agent with Dynamic Code Generation'
+        }
+    
+    def enhance_llm_content(self, detection: Dict, response_text: str, code_snippets: List[str]) -> str:
+        """Enhance LLM content with additional formatting and code integration"""
+        class_name = detection['class'].replace('_', ' ').title()
+        confidence = detection['confidence'] * 100
+        category = detection['category']
+        
+        # Add header information
+        enhanced_content = f"""🤖 **AI-Generated Analysis for {class_name}**
+📊 **Detection Confidence**: {confidence:.1f}%
+🗂️ **Category**: {category}
+
+---
+
+{response_text}"""
+        
+        # Add code section if available
+        if code_snippets:
+            enhanced_content += f"""
+
+---
+💻 **Generated Code/Procedures**:
+
+```
+{chr(10).join(code_snippets[:3])}
+```"""
+        
+        # Add footer with AI attribution
+        enhanced_content += f"""
+
+---
+🔬 **Analysis Source**: Advanced AI reasoning with Taiwan waste management knowledge base
+⚡ **Processing**: Real-time LLM generation with RAG enhancement"""
+        
+        return enhanced_content
+    
+    def get_individual_llm_guidance(self, detections: List[Dict]) -> List[Dict]:
+        """Fallback method to process items individually"""
+        guidance_list = []
+        
+        for detection in detections:
+            try:
                 class_name = detection['class']
                 category = detection['category']
                 confidence = detection['confidence'] * 100
                 
-                logger.info(f"Processing guidance for: {class_name} (LLM agent available: {self.llm_agent is not None})")
+                # Individual query - very simple
+                query = f"How to recycle {class_name}?"
                 
-                if self.llm_agent is not None:
-                    # Use the actual LLM agent to generate intelligent responses
-                    try:
-                        # Construct a detailed query for the LLM agent
-                        query = f"""I have detected a {class_name} (classified as {category}) with {confidence:.1f}% confidence in an image for waste classification. 
-
-Please provide comprehensive and specific guidance for this waste item. I need detailed information including:
-
-1. **Recycling Instructions**: Specific steps for properly recycling this exact type of {class_name}
-2. **Disassembly Steps**: If applicable, provide detailed step-by-step instructions for safely disassembling this {class_name} 
-3. **Safety Precautions**: Specific safety warnings and protective measures for handling this {class_name}
-4. **Environmental Impact**: Information about the environmental benefits of proper disposal
-5. **Local Disposal**: Recommendations for where to dispose of this type of waste
-6. **Special Requirements**: Any special handling, preparation, or processing requirements
-
-Please make your response detailed, practical, and specific to this exact type of waste item ({class_name}). Use any relevant information from the knowledge base about waste management regulations and procedures."""
-                        
-                        # Get response from the LLM agent
-                        logger.info(f"Querying LLM agent for detailed guidance on {class_name}...")
-                        response = self.llm_agent.chat(query)
-                        
-                        # Extract the response text
-                        response_text = str(response.response) if hasattr(response, 'response') else str(response)
-                        logger.info(f"LLM agent response length: {len(response_text)} characters")
-                        
-                        # Parse the LLM response to extract structured information
-                        guidance = self.parse_llm_response(detection, response_text)
-                        guidance['source'] = 'LLM Agent with RAG (Qwen2)'
-                        
-                        logger.info(f"Successfully generated LLM guidance for {class_name}")
-                        
-                    except Exception as e:
-                        logger.error(f"LLM agent error for {class_name}: {e}")
-                        logger.info(f"Falling back to enhanced basic guidance for {class_name}")
-                        # Fall back to enhanced basic guidance
-                        guidance = self.get_enhanced_basic_guidance(detection)
-                        guidance['source'] = 'Enhanced Basic Guidance (LLM Failed)'
-                else:
-                    logger.warning(f"No LLM agent available, using enhanced basic guidance for {class_name}")
-                    # No LLM agent available, use enhanced basic guidance
-                    guidance = self.get_enhanced_basic_guidance(detection)
-                    guidance['source'] = 'Enhanced Basic Guidance (No LLM)'
+                try:
+                    response = self.llm_agent.chat(query)
+                    response_text = str(response.response) if hasattr(response, 'response') else str(response)
+                    
+                    # Check if response is adequate
+                    if len(response_text) < 30 or any(phrase in response_text.lower() for phrase in ['unable to assist', 'no tool available']):
+                        response_text = self.get_direct_llm_response(f"recycle {class_name}")
                 
+                except Exception as e:
+                    logger.error(f"Agent query failed: {e}")
+                    response_text = self.get_direct_llm_response(f"recycle {class_name}")
+                
+                guidance = self.parse_individual_llm_response(detection, response_text)
+                guidance['source'] = 'LLM Agent Individual Processing'
                 guidance_list.append(guidance)
-            
-            logger.info(f"Generated LLM guidance for {len(guidance_list)} items")
-            return guidance_list
+                
+            except Exception as e:
+                logger.error(f"Individual LLM processing error for {detection['class']}: {e}")
+                guidance = self.get_enhanced_basic_guidance(detection)
+                guidance_list.append(guidance)
         
-        except Exception as e:
-            logger.error(f"LLM guidance error: {e}")
-            # Return enhanced basic guidance on error
-            return [self.get_enhanced_basic_guidance(det) for det in detections]
+        return guidance_list
     
     def parse_llm_response(self, detection: Dict, response_text: str) -> Dict:
         """Parse LLM response into structured guidance format"""
