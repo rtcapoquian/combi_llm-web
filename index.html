@@ -9,26 +9,48 @@
       href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"
       rel="stylesheet"
     />
+
+    <!-- Google Translate Script -->
+    <script type="text/javascript">
+      function googleTranslateElementInit() {
+        new google.translate.TranslateElement(
+          { pageLanguage: "en" },
+          "google_translate_element"
+        );
+      }
+    </script>
+
+    <!-- Load Google Translate script -->
+    <script
+      type="text/javascript"
+      src="//translate.google.com/translate_a/element.js?cb=googleTranslateElementInit"
+    ></script>
   </head>
   <body>
     <div class="container">
       <header class="header">
         <div class="header-content">
-          <div class="logo">
-            <i class="fas fa-recycle"></i>
-            <h1>Eco-Sort AI</h1>
-          </div>
-          <div class="tagline">
-            <p>
-              Verbose Real-Time Waste Classification and Item Disassembly
-              Guidance
-            </p>
-            <div class="tech-stack">
-              <span class="tech-badge">YOLOv11</span>
-              <span class="tech-badge">OpenVINO</span>
-              <span class="tech-badge">Qwen2</span>
-              <span class="tech-badge">RAG</span>
+          <div class="header-main">
+            <div class="logo">
+              <i class="fas fa-recycle"></i>
+              <h1>Eco-Sort AI</h1>
             </div>
+            <div class="tagline">
+              <p>
+                Verbose Real-Time Waste Classification and Item Disassembly
+                Guidance
+              </p>
+              <div class="tech-stack">
+                <span class="tech-badge">YOLOv11</span>
+                <span class="tech-badge">OpenVINO</span>
+                <span class="tech-badge">Qwen2</span>
+                <span class="tech-badge">RAG</span>
+              </div>
+            </div>
+          </div>
+          <!-- Google Translate Widget -->
+          <div class="translate-widget">
+            <div id="google_translate_element"></div>
           </div>
         </div>
       </header>

@@ -498,7 +498,8 @@ class EcoSortBackend:
                 draw.rectangle(bbox, outline=color_rgb, width=3)
                 
                 # Prepare label text
-                label = f"{class_name} ({confidence:.1f}%)"
+                label = f"{class_name} ({confidence * 100:.1f}%)"
+
                 
                 # Get text size
                 bbox_text = draw.textbbox((0, 0), label, font=font)
