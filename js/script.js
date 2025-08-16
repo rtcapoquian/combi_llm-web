@@ -467,36 +467,43 @@ class EcoSortAI {
     guidanceList.forEach((guidance) => {
       const guidanceDiv = document.createElement("div");
       guidanceDiv.className = "guidance-content fade-in";
-      
+
       // Build HTML content conditionally
-      let htmlContent = '';
-      
+      let htmlContent = "";
+
       // Only show title if it exists and is not empty
-      if (guidance.title && guidance.title.trim() !== '') {
+      if (guidance.title && guidance.title.trim() !== "") {
         htmlContent += `<h4><i class="fas fa-lightbulb"></i> ${guidance.title}</h4>`;
       }
-      
+
       // Always show content
-      htmlContent += `<div class="guidance-text">${guidance.content.replace(/\n/g, "<br>")}</div>`;
-      
+      htmlContent += `<div class="guidance-text">${guidance.content.replace(
+        /\n/g,
+        "<br>"
+      )}</div>`;
+
       // Only show disassembly section if it exists and has items
       if (guidance.disassembly && guidance.disassembly.length > 0) {
         htmlContent += `
                 <h5><i class="fas fa-tools"></i> Disassembly Steps:</h5>
                 <ul class="guidance-list">
-                    ${guidance.disassembly.map((step) => `<li>${step}</li>`).join("")}
+                    ${guidance.disassembly
+                      .map((step) => `<li>${step}</li>`)
+                      .join("")}
                 </ul>`;
       }
-      
+
       // Only show safety section if it exists and has items
       if (guidance.safety && guidance.safety.length > 0) {
         htmlContent += `
                 <h5><i class="fas fa-shield-alt"></i> Safety Precautions:</h5>
                 <ul class="guidance-list">
-                    ${guidance.safety.map((safety) => `<li>${safety}</li>`).join("")}
+                    ${guidance.safety
+                      .map((safety) => `<li>${safety}</li>`)
+                      .join("")}
                 </ul>`;
       }
-      
+
       guidanceDiv.innerHTML = htmlContent;
       container.appendChild(guidanceDiv);
     });

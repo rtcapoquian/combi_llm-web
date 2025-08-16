@@ -571,21 +571,16 @@ class EcoSortBackend:
         """Get direct response from LLM without agent wrapper"""
         try:
             if hasattr(self, 'llm') and self.llm:
-                # Create a very simple, concise query
-                simple_query = f"How to disassemble {query}? Give 2 short sentences only."
+                # Create a comprehensive query for detailed recycling instructions
+                comprehensive_query = f"How to recycle {query}? Provide detailed step-by-step instructions including preparation, disassembly if needed, and proper disposal methods."
                 
-                response = self.llm.complete(simple_query)
+                response = self.llm.complete(comprehensive_query)
                 response_text = str(response.text) if hasattr(response, 'text') else str(response)
                 
-                # Clean up the response and keep it concise
+                # Clean up the response but preserve full content
                 response_text = response_text.strip()
                 
-                # Remove repetitive text and keep only the first few sentences
-                sentences = response_text.split('. ')
-                if len(sentences) > 3:
-                    response_text = '. '.join(sentences[:3]) + '.'
-                
-                # Remove common repetitive phrases
+                # Remove only the most repetitive footer phrases
                 repetitive_phrases = [
                     'please note that this answer assumes',
                     'if you have different questions',
@@ -596,20 +591,26 @@ class EcoSortBackend:
                     'feel free to ask'
                 ]
                 
+                # Remove repetitive phrases but preserve main content
                 for phrase in repetitive_phrases:
                     response_text = response_text.lower().replace(phrase.lower(), '')
                 
-                # Capitalize first letter and clean up
-                response_text = response_text.strip('. ').capitalize()
-                if response_text and not response_text.endswith('.'):
-                    response_text += '.'
+                # Clean up formatting but preserve structure
+                import re
+                response_text = re.sub(r'\s+', ' ', response_text)
+                response_text = response_text.strip()
                 
-                if not response_text or len(response_text) < 20:
+                # Ensure proper capitalization
+                if response_text and not response_text[0].isupper():
+                    response_text = response_text[0].upper() + response_text[1:]
+                
+                if response_text and len(response_text) > 20:
+                    return response_text
+                else:
                     # Simple fallback
                     item_name = query.replace("recycle", "").strip()
                     return f"Clean the {item_name} thoroughly and place in appropriate recycling bin. Check local recycling guidelines for specific requirements."
                 
-                return response_text
             else:
                 # Simple fallback
                 item_name = query.replace("recycle", "").strip()
@@ -637,18 +638,21 @@ class EcoSortBackend:
                     # Simple individual query
                     query = f"recycle {class_name.replace('_', ' ')}"
                     
-                    # Try agent first, then fallback to direct LLM
+                    # Try agent first with better query, then fallback to direct LLM
                     if self.llm_agent is not None:
                         try:
-                            simple_query = f"How to recycle {class_name.replace('_', ' ')}?"
+                            # Use a more specific recycling query instead of disassembly
+                            simple_query = f"How to disassemble {class_name.replace('_', ' ')}? Include step-by-step instructions and safety precautions."
                             response = self.llm_agent.chat(simple_query)
                             response_text = str(response.response) if hasattr(response, 'response') else str(response)
                             
-                            # Check if response is adequate
-                            if (len(response_text) < 20 or 
-                                any(phrase in response_text.lower() for phrase in ['unable to assist', 'no tool available', 'cannot help', 'sorry'])):
+                            # Only fall back if response is truly inadequate (very short or contains error messages)
+                            if (len(response_text) < 50 or 
+                                any(phrase in response_text.lower() for phrase in ['unable to assist', 'no tool available', 'cannot help', 'sorry', 'i cannot', 'not available'])):
                                 logger.warning(f"Agent response inadequate for {class_name}, using direct LLM")
                                 response_text = self.get_direct_llm_response(query)
+                            else:
+                                logger.info(f"Agent provided good response for {class_name}")
                         except Exception as e:
                             logger.error(f"Agent query failed for {class_name}: {e}")
                             response_text = self.get_direct_llm_response(query)
@@ -762,11 +766,11 @@ class EcoSortBackend:
         }
     
     def clean_llm_response(self, response_text: str) -> str:
-        """Clean and simplify LLM response text"""
+        """Clean and preserve full LLM response text without truncation"""
         if not response_text:
             return "Follow local recycling guidelines for proper disposal."
         
-        # Remove repetitive and verbose phrases
+        # Remove only the most repetitive footer phrases but preserve the main content
         repetitive_phrases = [
             'please note that this answer assumes',
             'if you have different questions',
@@ -776,39 +780,50 @@ class EcoSortBackend:
             'thank you for using my service',
             'feel free to ask',
             'if you have any further questions',
-            'please note that',
-            'this answer assumes',
-            'i can assist you',
-            'do my best to provide',
-            'helpful answers',
-            'you have any further questions',
             'thank you for using my service',
             'have a great day'
         ]
         
-        # Clean the text
-        clean_text = response_text.lower()
+        # Clean the text but preserve the original structure
+        clean_text = response_text.strip()
+        
+        # Remove repetitive phrases (case insensitive)
         for phrase in repetitive_phrases:
+            # Remove the phrase from anywhere in the text
             clean_text = clean_text.replace(phrase, '')
+            clean_text = clean_text.replace(phrase.title(), '')
+            clean_text = clean_text.replace(phrase.capitalize(), '')
         
-        # Split into sentences and keep only the first 3 meaningful sentences
-        sentences = clean_text.split('. ')
-        meaningful_sentences = []
+        # Format numbered lists and bullet points properly
+        import re
         
-        for sentence in sentences:
-            sentence = sentence.strip()
-            if (sentence and 
-                len(sentence) > 10 and 
-                not any(skip in sentence for skip in ['thank you', 'please note', 'feel free'])):
-                meaningful_sentences.append(sentence.capitalize())
-                if len(meaningful_sentences) >= 3:
-                    break
+        # Add line breaks before numbered items (1., 2., 3., etc.)
+        clean_text = re.sub(r'(\d+\.\s)', r'\n\1', clean_text)
         
-        if meaningful_sentences:
-            result = '. '.join(meaningful_sentences)
-            if not result.endswith('.'):
-                result += '.'
-            return result
+        # Add line breaks before bullet points (-, •, *, etc.)
+        clean_text = re.sub(r'([.!?])\s*(-\s)', r'\1\n\2', clean_text)
+        clean_text = re.sub(r'([.!?])\s*(•\s)', r'\1\n\2', clean_text)
+        clean_text = re.sub(r'([.!?])\s*(\*\s)', r'\1\n\2', clean_text)
+        
+        # Add line breaks before section headers (safety precautions:, tips:, etc.)
+        clean_text = re.sub(r'([.!?])\s*(safety precautions?:)', r'\1\n\n\2', clean_text, flags=re.IGNORECASE)
+        clean_text = re.sub(r'([.!?])\s*(tips?\s*(for|:))', r'\1\n\n\2', clean_text, flags=re.IGNORECASE)
+        clean_text = re.sub(r'([.!?])\s*(hazardous waste)', r'\1\n\n\2', clean_text, flags=re.IGNORECASE)
+        
+        # Clean up excessive whitespace but preserve intentional line breaks
+        clean_text = re.sub(r' +', ' ', clean_text)  # Multiple spaces to single space
+        clean_text = re.sub(r'\n +', '\n', clean_text)  # Remove spaces at start of lines
+        clean_text = re.sub(r' +\n', '\n', clean_text)  # Remove spaces at end of lines
+        clean_text = re.sub(r'\n{3,}', '\n\n', clean_text)  # Max 2 consecutive line breaks
+        
+        # Remove leading/trailing whitespace and ensure proper capitalization
+        clean_text = clean_text.strip()
+        if clean_text and not clean_text[0].isupper():
+            clean_text = clean_text[0].upper() + clean_text[1:]
+        
+        # Return the full cleaned response without truncation
+        if clean_text and len(clean_text) > 20:
+            return clean_text
         else:
             return "Follow local recycling guidelines for proper disposal."
     
@@ -849,7 +864,7 @@ class EcoSortBackend:
                 confidence = detection['confidence'] * 100
                 
                 # Individual query - very simple
-                query = f"How to recycle {class_name}?"
+                query = f"How to throw {class_name}?"
                 
                 try:
                     response = self.llm_agent.chat(query)
