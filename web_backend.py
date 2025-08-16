@@ -203,12 +203,12 @@ class EcoSortBackend:
                             else:
                                 detection['annotated_image_path'] = None
                     
-                    processing_time = (time.time() - start_time) * 1000
+                    processing_time = time.time() - start_time  # seconds
                     
                     return jsonify({
                         'success': True,
                         'detections': detections,
-                        'processing_time_ms': processing_time,
+                        'processing_time_s': processing_time,
                         'engine_type': self.engine_type,
                         'annotated_image': f"/annotated/{Path(annotated_image_path).name}" if annotated_image_path else None
                     })

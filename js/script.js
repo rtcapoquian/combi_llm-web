@@ -220,12 +220,14 @@ class EcoSortAI {
         throw new Error(data.error || "Classification failed");
       }
 
-      // Update processing time display
-      this.updateStatus(
-        "processingTime",
-        `${data.processing_time_ms.toFixed(1)}ms`,
-        "info"
-      );
+      // Update processing time display (now in seconds)
+      if (typeof data.processing_time_s === "number") {
+        this.updateStatus(
+          "processingTime",
+          `${data.processing_time_s.toFixed(2)}s`,
+          "info"
+        );
+      }
 
       return data.detections || [];
     } catch (error) {
