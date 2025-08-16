@@ -117,7 +117,7 @@ class EcoSortBackend:
                         [self.vector_tool],  # Only use vector search tool
                         llm=self.llm,
                         max_iterations=5,  # Increase iterations
-                        verbose=False,     # Reduce verbosity
+                        verbose=True,     # Reduce verbosity
                     )
                     
                     # Set custom system prompt
