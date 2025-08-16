@@ -572,7 +572,7 @@ class EcoSortBackend:
         try:
             if hasattr(self, 'llm') and self.llm:
                 # Create a very simple, concise query
-                simple_query = f"How to recycle {query}? Give 2 short sentences only."
+                simple_query = f"How to disassemble {query}? Give 2 short sentences only."
                 
                 response = self.llm.complete(simple_query)
                 response_text = str(response.text) if hasattr(response, 'text') else str(response)
@@ -747,31 +747,15 @@ class EcoSortBackend:
         # Clean the response text
         clean_response = self.clean_llm_response(response_text)
         
-        # Simple, clean content formatting without verbose footers
-        enhanced_content = f"""**{class_name} Recycling Guide**
-
-{clean_response}
-
-**Category**: {category} | **Confidence**: {confidence:.1f}%"""
-        
-        # Simple disassembly and safety steps
-        disassembly_steps = [
-            f'Clean the {class_name.lower()} thoroughly',
-            'Remove any non-recyclable parts if needed',
-            'Place in appropriate recycling container'
-        ]
-        
-        safety_warnings = [
-            'Handle with care to avoid injury',
-            'Follow local recycling guidelines'
-        ]
+        # Simple content formatting without title and category info
+        enhanced_content = f"""{clean_response}"""
         
         return {
             'detection': detection,
-            'title': f'{class_name} - Recycling Guide',
+            'title': '',  # Remove title
             'content': enhanced_content,
-            'disassembly': disassembly_steps,
-            'safety': safety_warnings,
+            'disassembly': [],  # Remove disassembly steps
+            'safety': [],  # Remove safety warnings
             'category': category,
             'recycling_instructions': clean_response,
             'source': 'AI Assistant'
