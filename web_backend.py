@@ -116,7 +116,7 @@ class EcoSortBackend:
                     self.llm_agent = ReActAgent.from_tools(
                         [self.vector_tool],  # Only use vector search tool
                         llm=self.llm,
-                        max_iterations=3,  # Reduce iterations
+                        max_iterations=5,  # Increase iterations
                         verbose=False,     # Reduce verbosity
                     )
                     
